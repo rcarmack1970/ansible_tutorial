@@ -18,6 +18,23 @@
       update_cache: yes
     when: ansible_distribution == "Ubuntu"
 
+- hosts: workstations
+  become: true
+  tasks:
+
+  - name: install unzip
+    package:
+      name: unzip
+
+  - name: install terraform
+    unarchive:
+      src: https://releases.hashicorp.com/terraform/1.14.3/terraform_1.14.3_linux_386.zip
+      dest: /usr/loacl/bin
+      remote_src: yes
+      mode: 0755
+      owner: root
+      group: root
+
 - hosts: web_servers
   become: true
   tasks:
