@@ -1,0 +1,28 @@
+---
+
+- hosts: all
+  become: true
+  tasks:
+
+
+  - name: install apache2 and php
+    package: #will use the package for the flavor of linux
+      name: 
+        - "{{ apache_package }}"
+        - "{{ php_package }}"
+      state: latest
+      update_cache: yes
+
+
+
+
+#  - name: install apache2 and php package for Centos
+#    dnf:
+#      name: 
+#        - httpd
+#        - php
+#      state: latest
+#      update_cache: yes
+#    when: ansible_distribution == "CentOS"
+
+
