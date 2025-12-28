@@ -2,6 +2,9 @@
 
 - hosts: all
   become: true
+  #become_user: root
+  #become_method: sudo
+  #gather_facts: no
   pre_tasks:
 
   - name: install updates (CentOS)
@@ -20,6 +23,9 @@
 
 - hosts: all
   become: true
+  #become_user: root
+  #become_method: sudo
+  #gather_facts: no
   tasks:
 
   - name: create simone user
