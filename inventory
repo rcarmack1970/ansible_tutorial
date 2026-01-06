@@ -13,13 +13,13 @@
 10.148.1.201
 10.148.0.213
 
-[ad_controller]
+[ad_controllers]
 #10.148.0.30
 
-[dns_server]
+[dns_servers]
 #10.148.0.30
-#10.148.0.31
+10.148.0.31
 
-[nps_server]
+[nps_servers]
 #10.148.0.30
 #10.148.0.31

@@ -1,0 +1,7 @@
+- name: First Windows Playbook
+  hosts: dns_servers
+  gather_facts: no
+
+- hosts: dns_servers
+  roles:
+    - dns_servers

@@ -1,0 +1,34 @@
+- name: Get product id and product key
+  ansible.windows.win_product_facts:
+
+- name: Get the user account
+  ansible.windows.win_whoami:
+  register: whoami_result
+    
+- name: Display Windows edition
+  debug:
+    var: ansible_os_license_edition
+
+- name: Display Wndows license status
+  debug:
+    var: ansible_os_license_status
+
+- name: Display whoami info
+  debug:
+    var: whoami_result
+
+#- name: Display account name
+#  debug:
+#    var: account_name
+
+
+- name: run the setup facts
+  ansible.windows.setup:
+
+- name: Gather all facts with a custom timeout on Windows host
+  ansible.windows.setup:
+    gather_timeout: 30
+
+- name: Gather Windows facts including custom local facts from C:\CustomFacts
+  ansible.windows.setup:
+    fact_path: C:\CustomFacts
