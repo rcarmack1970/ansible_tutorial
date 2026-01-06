@@ -1,0 +1,5 @@
+-Name,-Address,-SharedSecret,-VendorName
+Cisco-amusronn-sw01,10.148.0.10,bobssecret,Cisco
+Cisco-amsuronn-wlc01,10.148.0.11,bobssecret,Cisco
+Cisco-amusronn-sw02,10.148.0.12,bobssecret,Cisco
+Palo-amusronn-fw01,10.148.0.20,bobssecret,"RADIUS Standard"

@@ -1,0 +1,30 @@
+- name: Windows SSH Playbook
+  hosts: dns_servers
+  vars:
+    ansible_user: "ansible-ssh"
+    ansible_password: "Mission1990$"
+    ansible_port: 22
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+    ansible_ssh_retries: 3
+    ansible_shell_type: powershell
+    ansible_become_method: runas
+    ansible_become_user: "{{ ansible_user }}"
+ 
+  tasks:
+    - name: Read clients from a CSV file and return a list
+      community.general.read_csv:
+        path: client-list.yml
+        fieldnames: name,address,secret,vendor
+      register: clients
+      delegate_to: localhost
+
+
+
+    - name: create NPS client
+      win_shell:
+        New-NpsRadiusClient -Name "Cisco-amusronn-swccor1" -Address "10.148.0.1" -SharedSecret "Mission1990$"
+      register: result_add_client
+
+    - name: display result_add_client
+      debug:
+        var: result_add_client
