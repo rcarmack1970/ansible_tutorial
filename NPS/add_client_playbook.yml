@@ -12,11 +12,12 @@
  
   tasks:
     - name: create NPS client
-      ansible.windows.win_powershell:
-        script: |
+      win_shell:
+      #ansible.windows.win_powershell:
+      #  script: |
           New-NpsRadiusClient -Name "Cisco-amusronn-swccor1" -Address "10.148.0.1" -SharedSecret "Mission1990$" -VendorName "Cisco"
-          New-NpsRadiusClient -Name "Cisco-amusronn-swccor2" -Address "10.148.0.2" -SharedSecret "Mission1990$" -VendorName "Cisco"
-          New-NpsRadiusClient -Name "Cisco-amusronn-fwpa01" -Address "10.148.0.5" -SharedSecret "Mission1990$" 
+      #    New-NpsRadiusClient -Name "Cisco-amusronn-swccor2" -Address "10.148.0.2" -SharedSecret "Mission1990$" -VendorName "Cisco"
+      #    New-NpsRadiusClient -Name "Cisco-amusronn-fwpa01" -Address "10.148.0.5" -SharedSecret "Mission1990$" 
       register: result_add_client
 
     - name: display result_add_client
