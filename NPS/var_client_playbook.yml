@@ -1,0 +1,48 @@
+- name: Windows SSH Playbook
+  hosts: dns_servers
+  gather_facts: no
+
+  vars:
+    ansible_user: "ansible-ssh"
+    ansible_password: "Mission1990$"
+    ansible_port: 22
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+    ansible_ssh_retries: 3
+    ansible_shell_type: powershell
+    ansible_become_method: runas
+    ansible_become_user: "{{ ansible_user }}"
+
+
+  vars_prompt:
+    - name: device_name
+      prompt: Enter Device Name
+      private: no
+    - name: ip_address
+      prompt: Enter the Device IP Address
+      private: no
+    - name: shared_secret
+      prompt: Enter the Shared Secret
+      private: no
+    - name: vendor_name
+      prompt: Enter the Vendor name, Cisco, or leave blank for default
+      private: no
+
+
+  tasks:
+    - name: create NPS client
+      win_shell:
+      #ansible.windows.win_powershell:
+        New-NpsRadiusClient -Name "{{ device_name }}" -Address "{{ ip_address }}" -SharedSecret "{{ shared_secret }}" -VendorName "{{ vendor_name }}"
+      #loop: "{{ device_name }}"
+      register: result_add_client
+
+    - name: display result_add_client
+      debug:
+        var: result_add_client
+     # loop: "{{ device_name }}"
+
+#  vars:
+#    device_name: []
+#    ip_address: []
+#    shared_secret: []
+#    vendor_name: []
