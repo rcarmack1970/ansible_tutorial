@@ -103,7 +103,7 @@
           }
         }
       register: nps_action
-      no_log: true
+      no_log: false
 
     - name: Show safe result summary
       debug:
