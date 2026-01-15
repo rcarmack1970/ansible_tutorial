@@ -1,5 +1,5 @@
 - name: Windows SSH Playbook
-  hosts: rons_windows_servers
+  hosts: all
   #hosts: nps_servers
   vars:
     ansible_user: "ansible-ssh"
