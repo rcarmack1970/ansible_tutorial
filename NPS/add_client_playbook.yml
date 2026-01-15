@@ -1,63 +1,112 @@
-- name: Manage NPS RADIUS clients
-  hosts: all
+- name: Manage NPS RADIUS client (single action) over SSH
+  hosts: nps_servers
   gather_facts: no
 
   vars:
-    ansible_user: "ansible-ssh"
-    ansible_password: "PASSWORD$"
-    ansible_port: 22
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
     ansible_shell_type: powershell
 
-    # Example data (in AWX you’d supply this via Survey as JSON/YAML)
-    radius_clients:
-      - name: "edge-fw-01"
-        ip: "10.10.10.10"
-        secret: "superSecret1!"
-        vendor: "Cisco"
-        state: "present"
-      - name: "old-switch-12"
-        ip: "10.10.10.12"
-        state: "absent"
+    # Normalize/clean input
+    action_name: "{{ action_name | lower | trim }}"
+    radius_vendor: "{{ radius_vendor | default('RADIUS Standard') | trim }}"
 
   tasks:
-    - name: Apply NPS client changes
-      win_shell: |
-        $Name = "{{ item.name }}"
-        $Address = "{{ item.ip }}"
-        $Vendor = "{{ item.vendor | default('') }}"
-        $Secret = "{{ item.secret | default('') }}"
-        $State = "{{ item.state | default('present') }}"
+    - name: Validate action_name
+      assert:
+        that:
+          - action_name in ['create', 'update', 'delete']
+        fail_msg: "action_name must be one of: create, update, delete"
 
-        if ($State -eq "present") {
-          # Optional: guard to avoid duplicates
-          $existing = Get-NpsRadiusClient -Name $Name -ErrorAction SilentlyContinue
-          if (-not $existing) {
-            if ([string]::IsNullOrWhiteSpace($Vendor)) {
-              New-NpsRadiusClient -Name $Name -Address $Address -SharedSecret $Secret
-            } else {
-              New-NpsRadiusClient -Name $Name -Address $Address -SharedSecret $Secret -VendorName $Vendor
+    - name: Validate required fields based on action
+      assert:
+        that:
+          - radius_client is defined and (radius_client | trim) != ''
+          - action_name == 'delete' or (ip_address is defined and (ip_address | trim) != '')
+          - action_name == 'delete' or (radius_secret is defined and (radius_secret | string | length) > 0)
+        fail_msg: >
+          Missing required fields. create/update require radius_client, ip_address, radius_secret.
+          delete requires radius_client only.
+
+    - name: Apply NPS action (create/update/delete)
+      ansible.windows.win_shell: |
+        $Name   = {{ radius_client | trim | to_json }}
+        $Action = {{ action_name | to_json }}
+        $IP     = {{ (ip_address | default('') | trim) | to_json }}
+        $Secret = {{ (radius_secret | default('') ) | to_json }}
+        $Vendor = {{ (radius_vendor | default('RADIUS Standard') | trim) | to_json }}
+
+        $existing = Get-NpsRadiusClient -Name $Name -ErrorAction SilentlyContinue
+
+        switch ($Action) {
+
+          "create" {
+            if ($existing) {
+              "EXISTS_NO_CHANGE: $Name"
+              exit 0
             }
-            "CREATED: $Name ($Address)"
-          } else {
-            "EXISTS: $Name (no change)"
-          }
-        }
-        elseif ($State -eq "absent") {
-          $existing = Get-NpsRadiusClient -Name $Name -ErrorAction SilentlyContinue
-          if ($existing) {
-            Remove-NpsRadiusClient -Name $Name
-            "DELETED: $Name"
-          } else {
-            "MISSING: $Name (no change)"
-          }
-        }
-        else {
-          throw "Invalid state '$State' for $Name"
-        }
-      loop: "{{ radius_clients }}"
-      register: nps_changes
 
-    - name: Show results
+            if ([string]::IsNullOrWhiteSpace($Vendor) -or $Vendor -eq "RADIUS Standard") {
+              New-NpsRadiusClient -Name $Name -Address $IP -SharedSecret $Secret -ErrorAction Stop | Out-Null
+            } else {
+              New-NpsRadiusClient -Name $Name -Address $IP -SharedSecret $Secret -VendorName $Vendor -ErrorAction Stop | Out-Null
+            }
+
+            "CREATED: $Name ($IP)"
+          }
+
+          "update" {
+            if (-not $existing) {
+              "MISSING_NO_CHANGE: $Name"
+              exit 0
+            }
+
+            # Prefer Set-NpsRadiusClient if it exists; otherwise replace by delete+create.
+            $setCmd = Get-Command Set-NpsRadiusClient -ErrorAction SilentlyContinue
+
+            if ($setCmd) {
+              if ([string]::IsNullOrWhiteSpace($Vendor) -or $Vendor -eq "RADIUS Standard") {
+                Set-NpsRadiusClient -Name $Name -Address $IP -SharedSecret $Secret -ErrorAction Stop | Out-Null
+              } else {
+                Set-NpsRadiusClient -Name $Name -Address $IP -SharedSecret $Secret -VendorName $Vendor -ErrorAction Stop | Out-Null
+              }
+              "UPDATED: $Name ($IP)"
+            } else {
+              Remove-NpsRadiusClient -Name $Name -ErrorAction Stop | Out-Null
+              if ([string]::IsNullOrWhiteSpace($Vendor) -or $Vendor -eq "RADIUS Standard") {
+                New-NpsRadiusClient -Name $Name -Address $IP -SharedSecret $Secret -ErrorAction Stop | Out-Null
+              } else {
+                New-NpsRadiusClient -Name $Name -Address $IP -SharedSecret $Secret -VendorName $Vendor -ErrorAction Stop | Out-Null
+              }
+              "UPDATED_BY_RECREATE: $Name ($IP)"
+            }
+          }
+
+          "delete" {
+            if (-not $existing) {
+              "MISSING_NO_CHANGE: $Name"
+              exit 0
+            }
+
+            Remove-NpsRadiusClient -Name $Name -ErrorAction Stop | Out-Null
+
+            # Verify deletion
+            $check = Get-NpsRadiusClient -Name $Name -ErrorAction SilentlyContinue
+            if ($check) {
+              Write-Error "DELETE_VERIFY_FAILED: $Name still exists after removal"
+              exit 1
+            }
+
+            "DELETED: $Name"
+          }
+
+          default {
+            throw "Invalid action '$Action'"
+          }
+        }
+      register: nps_action
+      no_log: true
+
+    - name: Show safe result summary
       debug:
-        var: nps_changes.results
+        msg: "{{ nps_action.stdout }}"
+      no_log: false
+ 

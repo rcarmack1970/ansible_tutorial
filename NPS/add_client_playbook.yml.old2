@@ -1,0 +1,63 @@
+- name: Manage NPS RADIUS clients
+  hosts: all
+  gather_facts: no
+
+  vars:
+    ansible_user: "ansible-ssh"
+    ansible_password: "PASSWORD$"
+    ansible_port: 22
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+    ansible_shell_type: powershell
+
+    # Example data (in AWX you’d supply this via Survey as JSON/YAML)
+    radius_clients:
+      - name: "edge-fw-01"
+        ip: "10.10.10.10"
+        secret: "superSecret1!"
+        vendor: "Cisco"
+        state: "present"
+      - name: "old-switch-12"
+        ip: "10.10.10.12"
+        state: "absent"
+
+  tasks:
+    - name: Apply NPS client changes
+      win_shell: |
+        $Name = "{{ item.name }}"
+        $Address = "{{ item.ip }}"
+        $Vendor = "{{ item.vendor | default('') }}"
+        $Secret = "{{ item.secret | default('') }}"
+        $State = "{{ item.state | default('present') }}"
+
+        if ($State -eq "present") {
+          # Optional: guard to avoid duplicates
+          $existing = Get-NpsRadiusClient -Name $Name -ErrorAction SilentlyContinue
+          if (-not $existing) {
+            if ([string]::IsNullOrWhiteSpace($Vendor)) {
+              New-NpsRadiusClient -Name $Name -Address $Address -SharedSecret $Secret
+            } else {
+              New-NpsRadiusClient -Name $Name -Address $Address -SharedSecret $Secret -VendorName $Vendor
+            }
+            "CREATED: $Name ($Address)"
+          } else {
+            "EXISTS: $Name (no change)"
+          }
+        }
+        elseif ($State -eq "absent") {
+          $existing = Get-NpsRadiusClient -Name $Name -ErrorAction SilentlyContinue
+          if ($existing) {
+            Remove-NpsRadiusClient -Name $Name
+            "DELETED: $Name"
+          } else {
+            "MISSING: $Name (no change)"
+          }
+        }
+        else {
+          throw "Invalid state '$State' for $Name"
+        }
+      loop: "{{ radius_clients }}"
+      register: nps_changes
+
+    - name: Show results
+      debug:
+        var: nps_changes.results
