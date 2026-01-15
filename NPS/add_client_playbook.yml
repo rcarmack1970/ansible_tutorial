@@ -3,10 +3,10 @@
   gather_facts: no
 
   vars:
-    ansible_shell_type: powershell
-
-    # Normalize/clean input
+    # Normalize survey inputs
     action_name: "{{ action_name | lower | trim }}"
+    radius_client: "{{ radius_client | trim }}"
+    ip_address: "{{ ip_address | default('') | trim }}"
     radius_vendor: "{{ radius_vendor | default('RADIUS Standard') | trim }}"
 
   tasks:
@@ -19,94 +19,105 @@
     - name: Validate required fields based on action
       assert:
         that:
-          - radius_client is defined and (radius_client | trim) != ''
-          - action_name == 'delete' or (ip_address is defined and (ip_address | trim) != '')
+          - radius_client != ''
+          - action_name == 'delete' or ip_address != ''
           - action_name == 'delete' or (radius_secret is defined and (radius_secret | string | length) > 0)
         fail_msg: >
           Missing required fields. create/update require radius_client, ip_address, radius_secret.
           delete requires radius_client only.
 
+    # Optional: prove PowerShell can run over SSH (useful for troubleshooting)
+    - name: Confirm PowerShell execution over SSH
+      ansible.windows.win_shell: >
+        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command
+        "$PSVersionTable.PSVersion.ToString()"
+      register: ps_version
+      changed_when: false
+
+    - name: Show PowerShell version
+      debug:
+        var: ps_version.stdout
+
     - name: Apply NPS action (create/update/delete)
-      ansible.windows.win_shell: |
-        $Name   = {{ radius_client | trim | to_json }}
-        $Action = {{ action_name | to_json }}
-        $IP     = {{ (ip_address | default('') | trim) | to_json }}
-        $Secret = {{ (radius_secret | default('') ) | to_json }}
-        $Vendor = {{ (radius_vendor | default('RADIUS Standard') | trim) | to_json }}
+      ansible.windows.win_shell: >
+        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command
+        "& {
+          $ErrorActionPreference = 'Stop';
 
-        $existing = Get-NpsRadiusClient -Name $Name -ErrorAction SilentlyContinue
+          $Name   = {{ radius_client | to_json }};
+          $Action = {{ action_name | to_json }};
+          $IP     = {{ ip_address | to_json }};
+          $Secret = {{ (radius_secret | default('')) | to_json }};
+          $Vendor = {{ radius_vendor | to_json }};
 
-        switch ($Action) {
+          function New-Client {
+            param($Name,$IP,$Secret,$Vendor)
 
-          "create" {
-            if ($existing) {
-              "EXISTS_NO_CHANGE: $Name"
-              exit 0
-            }
-
-            if ([string]::IsNullOrWhiteSpace($Vendor) -or $Vendor -eq "RADIUS Standard") {
-              New-NpsRadiusClient -Name $Name -Address $IP -SharedSecret $Secret -ErrorAction Stop | Out-Null
+            if ([string]::IsNullOrWhiteSpace($Vendor) -or $Vendor -eq 'RADIUS Standard') {
+              New-NpsRadiusClient -Name $Name -Address $IP -SharedSecret $Secret | Out-Null
             } else {
-              New-NpsRadiusClient -Name $Name -Address $IP -SharedSecret $Secret -VendorName $Vendor -ErrorAction Stop | Out-Null
+              New-NpsRadiusClient -Name $Name -Address $IP -SharedSecret $Secret -VendorName $Vendor | Out-Null
             }
-
-            "CREATED: $Name ($IP)"
           }
 
-          "update" {
-            if (-not $existing) {
-              "MISSING_NO_CHANGE: $Name"
-              exit 0
-            }
+          $existing = Get-NpsRadiusClient -Name $Name -ErrorAction SilentlyContinue
 
-            # Prefer Set-NpsRadiusClient if it exists; otherwise replace by delete+create.
-            $setCmd = Get-Command Set-NpsRadiusClient -ErrorAction SilentlyContinue
+          switch ($Action) {
 
-            if ($setCmd) {
-              if ([string]::IsNullOrWhiteSpace($Vendor) -or $Vendor -eq "RADIUS Standard") {
-                Set-NpsRadiusClient -Name $Name -Address $IP -SharedSecret $Secret -ErrorAction Stop | Out-Null
-              } else {
-                Set-NpsRadiusClient -Name $Name -Address $IP -SharedSecret $Secret -VendorName $Vendor -ErrorAction Stop | Out-Null
+            'create' {
+              if ($existing) {
+                'EXISTS_NO_CHANGE: ' + $Name
+                return
               }
-              "UPDATED: $Name ($IP)"
-            } else {
-              Remove-NpsRadiusClient -Name $Name -ErrorAction Stop | Out-Null
-              if ([string]::IsNullOrWhiteSpace($Vendor) -or $Vendor -eq "RADIUS Standard") {
-                New-NpsRadiusClient -Name $Name -Address $IP -SharedSecret $Secret -ErrorAction Stop | Out-Null
-              } else {
-                New-NpsRadiusClient -Name $Name -Address $IP -SharedSecret $Secret -VendorName $Vendor -ErrorAction Stop | Out-Null
+
+              New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
+              'CREATED: ' + $Name + ' (' + $IP + ')'
+              return
+            }
+
+            'update' {
+              if (-not $existing) {
+                'MISSING_NO_CHANGE: ' + $Name
+                return
               }
-              "UPDATED_BY_RECREATE: $Name ($IP)"
-            }
-          }
 
-          "delete" {
-            if (-not $existing) {
-              "MISSING_NO_CHANGE: $Name"
-              exit 0
-            }
+              # Update semantics: replace (remove + recreate) to apply new IP/secret/vendor
+              Remove-NpsRadiusClient -Name $Name | Out-Null
+              New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
 
-            Remove-NpsRadiusClient -Name $Name -ErrorAction Stop | Out-Null
+              # Verify after update
+              $check = Get-NpsRadiusClient -Name $Name -ErrorAction SilentlyContinue
+              if (-not $check) { throw ('UPDATE_VERIFY_FAILED: ' + $Name) }
 
-            # Verify deletion
-            $check = Get-NpsRadiusClient -Name $Name -ErrorAction SilentlyContinue
-            if ($check) {
-              Write-Error "DELETE_VERIFY_FAILED: $Name still exists after removal"
-              exit 1
+              'UPDATED: ' + $Name + ' (' + $IP + ')'
+              return
             }
 
-            "DELETED: $Name"
-          }
+            'delete' {
+              if (-not $existing) {
+                'MISSING_NO_CHANGE: ' + $Name
+                return
+              }
 
-          default {
-            throw "Invalid action '$Action'"
+              Remove-NpsRadiusClient -Name $Name | Out-Null
+
+              # Verify deletion
+              $check = Get-NpsRadiusClient -Name $Name -ErrorAction SilentlyContinue
+              if ($check) { throw ('DELETE_VERIFY_FAILED: ' + $Name) }
+
+              'DELETED: ' + $Name
+              return
+            }
+
+            default {
+              throw ('Invalid action: ' + $Action)
+            }
           }
-        }
+        }"
       register: nps_action
       no_log: false
 
-    - name: Show safe result summary
+    - name: Safe output summary
       debug:
         msg: "{{ nps_action.stdout }}"
-      no_log: false
  
