@@ -1,5 +1,5 @@
 - name: Manage NPS RADIUS client (single action) over SSH
-  hosts: nps_servers
+  hosts: all
   gather_facts: no
 
   vars:
