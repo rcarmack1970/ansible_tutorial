@@ -1,5 +1,5 @@
 - name: Manage NPS RADIUS clients
-  hosts: nps_servers
+  hosts: all
   gather_facts: no
 
   vars:
