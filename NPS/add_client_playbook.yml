@@ -27,16 +27,16 @@
           delete requires radius_client only.
 
     # Optional: prove PowerShell can run over SSH (useful for troubleshooting)
-    - name: Confirm PowerShell execution over SSH
-      ansible.windows.win_shell: >
-        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command
-        "$PSVersionTable.PSVersion.ToString()"
-      register: ps_version
-      changed_when: false
+    #- name: Confirm PowerShell execution over SSH
+    #  ansible.windows.win_shell: >
+    #    powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command
+    #    "$PSVersionTable.PSVersion.ToString()"
+    #  register: ps_version
+    #  changed_when: false
 
-    - name: Show PowerShell version
-      debug:
-        var: ps_version.stdout
+    #- name: Show PowerShell version
+    #  debug:
+    #    var: ps_version.stdout
 
     - name: Apply NPS action (create/update/delete)
       ansible.windows.win_shell: >
