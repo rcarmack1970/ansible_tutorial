@@ -1,5 +1,5 @@
 ---
-# AWX-optimized version - credentials injected by AWX
+# Alternative version using WinRM (recommended for Windows)
 - name: Manage NPS RADIUS client via WinRM
   hosts: all
   gather_facts: no
@@ -7,12 +7,11 @@
   vars:
     # WinRM Connection settings
     ansible_connection: winrm
+    ansible_user: "ansible-ssh"
+    ansible_password: "Mission1990$"
     ansible_port: 5985  # Use 5986 for HTTPS
     ansible_winrm_transport: ntlm  # Or kerberos, credssp, basic
     ansible_winrm_server_cert_validation: ignore  # For testing only
-
-    # AWX will inject ansible_user and ansible_password from the attached credential
-    # No need to define them here - they come from AWX Resources -> Credentials
 
     # Normalize survey inputs
     action_name: "{{ action_name | lower | trim }}"
@@ -75,7 +74,7 @@
             New-NpsRadiusClient @params | Out-Null
           }
 
-          # Check if client exists (Windows Server 2025 doesn't support -Name parameter)
+          # Check if client exists (older NPS versions don't support -Name parameter)
           try {
             $allClients = Get-NpsRadiusClient -ErrorAction SilentlyContinue
             $existing = $allClients | Where-Object { $_.Name -eq $Name }
@@ -100,7 +99,7 @@
                 Write-Output "MISSING_NO_CHANGE: $Name"
                 $Ansible.Changed = $false
               } else {
-                # Update by removing and recreating - use netsh for Server 2025 compatibility
+                # Update by removing and recreating - use netsh for old NPS versions
                 try {
                   $result = netsh nps delete client name="$Name" 2>&1
                   $resultString = $result -join " "
@@ -130,7 +129,7 @@
                 Write-Output "MISSING_NO_CHANGE: $Name"
                 $Ansible.Changed = $false
               } else {
-                # Use netsh for Windows Server 2025 compatibility
+                # Use netsh for maximum compatibility with old NPS versions
                 try {
                   $result = netsh nps delete client name="$Name" 2>&1
                   $resultString = $result -join " "
