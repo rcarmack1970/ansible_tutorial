@@ -7,7 +7,7 @@
   vars:
     # WinRM Connection settings
     ansible_connection: winrm
-    ansible_user: "roncarmack\ansible-ssh"
+    ansible_user: "ansible-ssh@roncarmack.com"
     ansible_password: "Mission1990$"
     ansible_port: 5985  # Use 5986 for HTTPS
     ansible_winrm_transport: ntlm  # Or kerberos, credssp, basic
