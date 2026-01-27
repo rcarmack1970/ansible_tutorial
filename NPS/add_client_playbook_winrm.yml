@@ -1,0 +1,138 @@
+---
+# Alternative version using WinRM (recommended for Windows)
+- name: Manage NPS RADIUS client via WinRM
+  hosts: all
+  gather_facts: no
+
+  vars:
+    # WinRM Connection settings
+    ansible_connection: winrm
+    ansible_user: "ansible-ssh"
+    ansible_password: "Mission1990$"
+    ansible_port: 5985  # Use 5986 for HTTPS
+    ansible_winrm_transport: ntlm  # Or kerberos, credssp, basic
+    ansible_winrm_server_cert_validation: ignore  # For testing only
+
+    # Normalize survey inputs
+    action_name: "{{ action_name | lower | trim }}"
+    radius_client: "{{ radius_client | trim }}"
+    ip_address: "{{ ip_address | default('') | trim }}"
+    radius_vendor: "{{ radius_vendor | default('RADIUS Standard') | trim }}"
+
+  tasks:
+    - name: Validate action_name
+      assert:
+        that:
+          - action_name in ['create', 'update', 'delete']
+        fail_msg: "action_name must be one of: create, update, delete"
+
+    - name: Validate required fields based on action
+      assert:
+        that:
+          - radius_client != ''
+          - action_name == 'delete' or ip_address != ''
+          - action_name == 'delete' or (radius_secret is defined and (radius_secret | string | length) > 0)
+        fail_msg: >
+          Missing required fields. create/update require radius_client, ip_address, radius_secret.
+          delete requires radius_client only.
+
+    - name: Test WinRM connection
+      ansible.windows.win_ping:
+      register: ping_result
+
+    - name: Apply NPS action (create/update/delete)
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+
+          $Name   = '{{ radius_client }}'
+          $Action = '{{ action_name }}'
+          $IP     = '{{ ip_address }}'
+          $Secret = '{{ radius_secret | default('') }}'
+          $Vendor = '{{ radius_vendor }}'
+
+          # Import NPS module
+          try {
+            Import-Module NPS -ErrorAction Stop
+          } catch {
+            throw "NPS module not available. Is NPS role installed?"
+          }
+
+          function New-Client {
+            param($Name, $IP, $Secret, $Vendor)
+
+            $params = @{
+              Name = $Name
+              Address = $IP
+              SharedSecret = $Secret
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($Vendor) -and $Vendor -ne 'RADIUS Standard') {
+              $params['VendorName'] = $Vendor
+            }
+
+            New-NpsRadiusClient @params | Out-Null
+          }
+
+          # Check if client exists
+          $existing = Get-NpsRadiusClient -Name $Name -ErrorAction SilentlyContinue
+
+          switch ($Action) {
+            'create' {
+              if ($existing) {
+                Write-Output "EXISTS_NO_CHANGE: $Name"
+                $Ansible.Changed = $false
+              } else {
+                New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
+                Write-Output "CREATED: $Name ($IP)"
+                $Ansible.Changed = $true
+              }
+            }
+
+            'update' {
+              if (-not $existing) {
+                Write-Output "MISSING_NO_CHANGE: $Name"
+                $Ansible.Changed = $false
+              } else {
+                # Update by removing and recreating
+                Remove-NpsRadiusClient -Name $Name | Out-Null
+                New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
+
+                # Verify the update
+                $check = Get-NpsRadiusClient -Name $Name -ErrorAction SilentlyContinue
+                if (-not $check) {
+                  throw "UPDATE_VERIFY_FAILED: $Name"
+                }
+
+                Write-Output "UPDATED: $Name ($IP)"
+                $Ansible.Changed = $true
+              }
+            }
+
+            'delete' {
+              if (-not $existing) {
+                Write-Output "MISSING_NO_CHANGE: $Name"
+                $Ansible.Changed = $false
+              } else {
+                Remove-NpsRadiusClient -Name $Name | Out-Null
+
+                # Verify deletion
+                $check = Get-NpsRadiusClient -Name $Name -ErrorAction SilentlyContinue
+                if ($check) {
+                  throw "DELETE_VERIFY_FAILED: $Name"
+                }
+
+                Write-Output "DELETED: $Name"
+                $Ansible.Changed = $true
+              }
+            }
+
+            default {
+              throw "Invalid action: $Action"
+            }
+          }
+      register: nps_action
+
+    - name: Display operation result
+      debug:
+        msg: "{{ nps_action.output[0] | default('No output') }}"
