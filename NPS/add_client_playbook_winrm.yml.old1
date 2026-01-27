@@ -100,7 +100,7 @@
                 $Ansible.Changed = $false
               } else {
                 # Update by removing and recreating
-                $existing | Remove-NpsRadiusClient | Out-Null
+                $existing | Remove-NpsRadiusClient -Confirm:$false | Out-Null
                 New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
 
                 # Verify the update
@@ -120,7 +120,7 @@
                 Write-Output "MISSING_NO_CHANGE: $Name"
                 $Ansible.Changed = $false
               } else {
-                $existing | Remove-NpsRadiusClient | Out-Null
+                $existing | Remove-NpsRadiusClient -Confirm:$false | Out-Null
 
                 # Verify deletion
                 $allClientsAfter = Get-NpsRadiusClient -ErrorAction SilentlyContinue
