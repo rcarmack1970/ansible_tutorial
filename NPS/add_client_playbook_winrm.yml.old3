@@ -99,16 +99,23 @@
                 Write-Output "MISSING_NO_CHANGE: $Name"
                 $Ansible.Changed = $false
               } else {
-                # Update by removing and recreating - use netsh for old NPS versions
+                # Update by removing and recreating - use WMI for older NPS versions
                 try {
-                  $result = netsh nps delete client name="$Name" 2>&1
-                  $resultString = $result -join " "
-
-                  if (-not ($resultString -like "*Ok*" -or $resultString -like "*successfully*" -or $resultString -like "*not found*")) {
-                    throw "netsh delete failed: $resultString"
+                  $wmiClient = Get-WmiObject -Namespace "root\Microsoft\NPS" -Class "NPS_RadiusClient" -Filter "Name='$Name'"
+                  if ($wmiClient) {
+                    $wmiClient.Delete() | Out-Null
+                  } else {
+                    throw "WMI object not found"
                   }
                 } catch {
-                  throw "Failed to remove client for update: $_"
+                  # Fallback method
+                  try {
+                    $existing | ForEach-Object {
+                      Remove-NpsRadiusClient -InputObject $_ -ErrorAction Stop | Out-Null
+                    }
+                  } catch {
+                    throw "Failed to remove client: $_"
+                  }
                 }
                 New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
 
@@ -129,20 +136,25 @@
                 Write-Output "MISSING_NO_CHANGE: $Name"
                 $Ansible.Changed = $false
               } else {
-                # Use netsh for maximum compatibility with old NPS versions
+                # Older NPS versions need special handling - use WMI instead
                 try {
-                  $result = netsh nps delete client name="$Name" 2>&1
-                  $resultString = $result -join " "
-
-                  if ($resultString -like "*Ok*" -or $resultString -like "*successfully*") {
-                    Write-Output "Client removed via netsh"
-                  } elseif ($resultString -like "*not found*" -or $resultString -like "*does not exist*") {
-                    Write-Output "Client already removed"
+                  # Use WMI to remove the client (works on all Windows/NPS versions)
+                  $wmiClient = Get-WmiObject -Namespace "root\Microsoft\NPS" -Class "NPS_RadiusClient" -Filter "Name='$Name'"
+                  if ($wmiClient) {
+                    $wmiClient.Delete() | Out-Null
                   } else {
-                    throw "netsh command failed: $resultString"
+                    throw "WMI object not found"
                   }
                 } catch {
-                  throw "Failed to remove client: $_"
+                  # Fallback: Try ForEach with explicit handling
+                  try {
+                    $existing | ForEach-Object {
+                      $clientToRemove = $_
+                      Remove-NpsRadiusClient -InputObject $clientToRemove -ErrorAction Stop | Out-Null
+                    }
+                  } catch {
+                    throw "Failed to remove client: $_"
+                  }
                 }
 
                 # Verify deletion
