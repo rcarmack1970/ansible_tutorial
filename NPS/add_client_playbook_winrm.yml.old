@@ -7,7 +7,7 @@
   vars:
     # WinRM Connection settings
     ansible_connection: winrm
-    ansible_user: "ansible-ssh"
+    ansible_user: "ansible-ssh@roncarmack.com"
     ansible_password: "Mission1990$"
     ansible_port: 5985  # Use 5986 for HTTPS
     ansible_winrm_transport: ntlm  # Or kerberos, credssp, basic
@@ -74,13 +74,8 @@
             New-NpsRadiusClient @params | Out-Null
           }
 
-          # Check if client exists (older NPS versions don't support -Name parameter)
-          try {
-            $allClients = Get-NpsRadiusClient -ErrorAction SilentlyContinue
-            $existing = $allClients | Where-Object { $_.Name -eq $Name }
-          } catch {
-            $existing = $null
-          }
+          # Check if client exists
+          $existing = Get-NpsRadiusClient -Name $Name -ErrorAction SilentlyContinue
 
           switch ($Action) {
             'create' {
@@ -100,12 +95,11 @@
                 $Ansible.Changed = $false
               } else {
                 # Update by removing and recreating
-                $existing | Remove-NpsRadiusClient -Confirm:$false | Out-Null
+                Remove-NpsRadiusClient -Name $Name | Out-Null
                 New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
 
                 # Verify the update
-                $allClientsAfter = Get-NpsRadiusClient -ErrorAction SilentlyContinue
-                $check = $allClientsAfter | Where-Object { $_.Name -eq $Name }
+                $check = Get-NpsRadiusClient -Name $Name -ErrorAction SilentlyContinue
                 if (-not $check) {
                   throw "UPDATE_VERIFY_FAILED: $Name"
                 }
@@ -120,11 +114,10 @@
                 Write-Output "MISSING_NO_CHANGE: $Name"
                 $Ansible.Changed = $false
               } else {
-                $existing | Remove-NpsRadiusClient -Confirm:$false | Out-Null
+                Remove-NpsRadiusClient -Name $Name | Out-Null
 
                 # Verify deletion
-                $allClientsAfter = Get-NpsRadiusClient -ErrorAction SilentlyContinue
-                $check = $allClientsAfter | Where-Object { $_.Name -eq $Name }
+                $check = Get-NpsRadiusClient -Name $Name -ErrorAction SilentlyContinue
                 if ($check) {
                   throw "DELETE_VERIFY_FAILED: $Name"
                 }
