@@ -99,24 +99,8 @@
                 Write-Output "MISSING_NO_CHANGE: $Name"
                 $Ansible.Changed = $false
               } else {
-                # Update by removing and recreating - use WMI for older NPS versions
-                try {
-                  $wmiClient = Get-WmiObject -Namespace "root\Microsoft\NPS" -Class "NPS_RadiusClient" -Filter "Name='$Name'"
-                  if ($wmiClient) {
-                    $wmiClient.Delete() | Out-Null
-                  } else {
-                    throw "WMI object not found"
-                  }
-                } catch {
-                  # Fallback method
-                  try {
-                    $existing | ForEach-Object {
-                      Remove-NpsRadiusClient -InputObject $_ -ErrorAction Stop | Out-Null
-                    }
-                  } catch {
-                    throw "Failed to remove client: $_"
-                  }
-                }
+                # Update by removing and recreating
+                $existing | Remove-NpsRadiusClient | Out-Null
                 New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
 
                 # Verify the update
@@ -136,26 +120,7 @@
                 Write-Output "MISSING_NO_CHANGE: $Name"
                 $Ansible.Changed = $false
               } else {
-                # Older NPS versions need special handling - use WMI instead
-                try {
-                  # Use WMI to remove the client (works on all Windows/NPS versions)
-                  $wmiClient = Get-WmiObject -Namespace "root\Microsoft\NPS" -Class "NPS_RadiusClient" -Filter "Name='$Name'"
-                  if ($wmiClient) {
-                    $wmiClient.Delete() | Out-Null
-                  } else {
-                    throw "WMI object not found"
-                  }
-                } catch {
-                  # Fallback: Try ForEach with explicit handling
-                  try {
-                    $existing | ForEach-Object {
-                      $clientToRemove = $_
-                      Remove-NpsRadiusClient -InputObject $clientToRemove -ErrorAction Stop | Out-Null
-                    }
-                  } catch {
-                    throw "Failed to remove client: $_"
-                  }
-                }
+                $existing | Remove-NpsRadiusClient | Out-Null
 
                 # Verify deletion
                 $allClientsAfter = Get-NpsRadiusClient -ErrorAction SilentlyContinue
