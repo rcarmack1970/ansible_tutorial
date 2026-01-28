@@ -100,4 +100,4 @@
 
     - name: Display operation result
       debug:
-        msg: "{{ nps_action.output[0] | default('No output') }}"
+        var: nps_action.output
