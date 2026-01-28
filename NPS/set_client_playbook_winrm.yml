@@ -50,9 +50,22 @@
 
           # Check if client exists (Windows Server 2025 doesn't support -Name parameter)
           try {
-            $allClients = Get-NpsRadiusClient -ErrorAction SilentlyContinue
+            $allClients = Get-NpsRadiusClient -ErrorAction Stop
+            Write-Output "DEBUG: Found $($allClients.Count) total clients"
+            Write-Output "DEBUG: Looking for client named: '$Name'"
+
+            # Debug: Show all client names
+            $allClients | ForEach-Object { Write-Output "DEBUG: Client found: '$($_.Name)'" }
+
             $existing = $allClients | Where-Object { $_.Name -eq $Name }
+
+            if ($existing) {
+              Write-Output "DEBUG: Match found for '$Name'"
+            } else {
+              Write-Output "DEBUG: No match found for '$Name'"
+            }
           } catch {
+            Write-Output "DEBUG: Error getting clients: $_"
             $existing = $null
           }
 
