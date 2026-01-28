@@ -1,0 +1,90 @@
+---
+# AWX-optimized version - credentials injected by AWX
+- name: Manage NPS RADIUS client via WinRM
+  hosts: all
+  gather_facts: no
+
+  vars:
+    # WinRM Connection settings
+    ansible_connection: winrm
+    ansible_port: 5985  # Use 5986 for HTTPS
+    ansible_winrm_transport: ntlm  # Or kerberos, credssp, basic
+    ansible_winrm_server_cert_validation: ignore  # For testing only
+
+    # AWX will inject ansible_user and ansible_password from the attached credential
+    # No need to define them here - they come from AWX Resources -> Credentials
+
+    # Normalize survey inputs
+    radius_client: "{{ radius_client | trim }}"
+    ip_address: "{{ ip_address | default('') | trim }}"
+    radius_vendor: "{{ radius_vendor | default('RADIUS Standard') | trim }}"
+
+  tasks:
+    - name: Validate required fields based on action
+      assert:
+        that:
+          - radius_client != ''
+        fail_msg: >
+          Missing required field. radius_client, ip_address, radius_secret.
+    
+    - name: Test WinRM connection
+      ansible.windows.win_ping:
+      register: ping_result
+
+    - name: Update NPS Client
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+
+          $Name   = '{{ radius_client }}'
+          $IP     = '{{ ip_address }}'
+          $Secret = '{{ radius_secret | default('') }}'
+          $Vendor = '{{ radius_vendor }}'
+
+          # Import NPS module
+          try {
+            Import-Module NPS -ErrorAction Stop
+          } catch {
+            throw "NPS module not available. Is NPS role installed?"
+          }
+
+         # Check if client exists (Windows Server 2025 doesn't support -Name parameter)
+          try {
+            $allClients = Get-NpsRadiusClient -ErrorAction SilentlyContinue
+            $existing = $allClients | Where-Object { $_.Name -eq $Name }
+          } catch {
+            $existing = $null
+          }
+
+
+          if (-not $existing) {
+             Write-Output "MISSING_NO_CHANGE: $Name"
+             $Ansible.Changed = $false
+           } else {
+             # Update client using netsh (updates in place without deletion)
+             try {
+               $result = netsh nps set client name="$Name" address=$IP secret=$Secret vendor="$Vendor"
+               $resultString = $result -join " "
+
+               if (-not ($resultString -like "*Ok*" -or $resultString -like "*successfully*")) {
+                 throw "netsh set client failed: $resultString"
+               }
+             } catch {
+               throw "Failed to update client: $_"
+             }
+
+             # Verify the update
+             $allClientsAfter = Get-NpsRadiusClient -ErrorAction SilentlyContinue
+             $check = $allClientsAfter | Where-Object { $_.Name -eq $Name }
+             if (-not $check) {
+               throw "UPDATE_VERIFY_FAILED: $Name"
+             }
+             Write-Output "UPDATED: $Name ($IP)"
+             $Ansible.Changed = $true
+          }
+          
+      register: nps_action
+
+    - name: Display operation result
+      debug:
+        msg: "{{ nps_action.output[0] | default('No output') }}"
