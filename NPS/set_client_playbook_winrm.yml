@@ -48,7 +48,7 @@
             throw "NPS module not available. Is NPS role installed?"
           }
 
-         # Check if client exists (Windows Server 2025 doesn't support -Name parameter)
+          # Check if client exists (Windows Server 2025 doesn't support -Name parameter)
           try {
             $allClients = Get-NpsRadiusClient -ErrorAction SilentlyContinue
             $existing = $allClients | Where-Object { $_.Name -eq $Name }
