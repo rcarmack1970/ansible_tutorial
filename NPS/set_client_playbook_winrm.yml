@@ -76,7 +76,7 @@
            } else {
              # Update client using netsh (updates in place without deletion)
              try {
-               $result = netsh nps set client name="$Name" address=$IP secret=$Secret vendor="$Vendor"
+               $result = netsh nps set client name="$Name" address=$IP sharedsecret=$Secret vendor="$Vendor"
                $resultString = $result -join " "
 
                if (-not ($resultString -like "*Ok*" -or $resultString -like "*successfully*")) {
