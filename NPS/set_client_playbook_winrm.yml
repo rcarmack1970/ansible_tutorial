@@ -75,8 +75,24 @@
              $Ansible.Changed = $false
            } else {
              # Update client using netsh (updates in place without deletion)
+             # Build command dynamically - only include parameters that have values
              try {
-               $result = netsh nps set client name="$Name" address=$IP sharedsecret=$Secret vendor="$Vendor"
+               $cmd = "netsh nps set client name=`"$Name`""
+
+               if ($IP -ne '') {
+                 $cmd += " address=$IP"
+               }
+
+               if ($Secret -ne '') {
+                 $cmd += " sharedsecret=$Secret"
+               }
+
+               if ($Vendor -ne '') {
+                 $cmd += " vendor=`"$Vendor`""
+               }
+
+               Write-Output "DEBUG: Executing: $cmd"
+               $result = Invoke-Expression $cmd
                $resultString = $result -join " "
 
                if (-not ($resultString -like "*Ok*" -or $resultString -like "*successfully*")) {
@@ -92,8 +108,21 @@
              if (-not $check) {
                throw "UPDATE_VERIFY_FAILED: $Name"
              }
-             Write-Output "UPDATED: $Name ($IP)"
-             $Ansible.Changed = $true
+
+             # Build result message showing what was updated
+             $updatedFields = @()
+             if ($IP -ne '') { $updatedFields += "IP=$IP" }
+             if ($Secret -ne '') { $updatedFields += "Secret=***" }
+             if ($Vendor -ne '') { $updatedFields += "Vendor=$Vendor" }
+
+             $updateMsg = if ($updatedFields.Count -gt 0) {
+               "UPDATED: $Name (" + ($updatedFields -join ", ") + ")"
+             } else {
+               "NO_CHANGES: $Name (no parameters provided)"
+             }
+
+             Write-Output $updateMsg
+             $Ansible.Changed = ($updatedFields.Count -gt 0)
           }
           
       register: nps_action
