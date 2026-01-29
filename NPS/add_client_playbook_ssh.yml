@@ -1,14 +1,17 @@
 # AWX-optimized version - credentials injected by AWX
-- name: Manage NPS RADIUS client via SSH
+- name: Manage NPS RADIUS client via WinRM
   hosts: all
   gather_facts: no
 
   vars:
-    # SSH Connection settings (OpenSSH on Windows)
-    ansible_connection: ssh
-    ansible_port: 22
-    ansible_shell_type: powershell
-    ansible_python_interpreter: none
+    # WinRM Connection settings
+    ansible_connection: winrm
+    ansible_port: 5985  # Use 5986 for HTTPS
+    ansible_winrm_transport: ntlm  # Or kerberos, credssp, basic
+    ansible_winrm_server_cert_validation: ignore  # For testing only
+
+    # AWX will inject ansible_user and ansible_password from the attached credential
+    # No need to define them here - they come from AWX Resources -> Credentials
 
     # Normalize survey inputs
     action_name: "{{ action_name | lower | trim }}"
@@ -33,72 +36,133 @@
           Missing required fields. create/update require radius_client, ip_address, radius_secret.
           delete requires radius_client only.
 
-    - name: Apply NPS action (create/update/delete) over SSH PowerShell
-      ansible.builtin.raw: |
-        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {{ '
-        $script = @"
-        $ErrorActionPreference = "Stop"
+    - name: Test WinRM connection
+      ansible.windows.win_ping:
+      register: ping_result
 
-        $Name   = "{{ radius_client }}"
-        $Action = "{{ action_name }}"
-        $IP     = "{{ ip_address }}"
-        $Secret = "{{ radius_secret | default("") }}"
-        $Vendor = "{{ radius_vendor }}"
+    - name: Apply NPS action (create/update/delete)
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
 
-        Import-Module NPS -ErrorAction Stop
+          $Name   = '{{ radius_client }}'
+          $Action = '{{ action_name }}'
+          $IP     = '{{ ip_address }}'
+          $Secret = '{{ radius_secret | default('') }}'
+          $Vendor = '{{ radius_vendor }}'
 
-        function New-Client {
-          param($Name, $IP, $Secret, $Vendor)
-
-          $params = @{
-            Name         = $Name
-            Address      = $IP
-            SharedSecret = $Secret
+          # Import NPS module
+          try {
+            Import-Module NPS -ErrorAction Stop
+          } catch {
+            throw "NPS module not available. Is NPS role installed?"
           }
 
-          if (-not [string]::IsNullOrWhiteSpace($Vendor) -and $Vendor -ne "RADIUS Standard") {
-            $params["VendorName"] = $Vendor
+          function New-Client {
+            param($Name, $IP, $Secret, $Vendor)
+
+            $params = @{
+              Name = $Name
+              Address = $IP
+              SharedSecret = $Secret
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($Vendor) -and $Vendor -ne 'RADIUS Standard') {
+              $params['VendorName'] = $Vendor
+            }
+
+            New-NpsRadiusClient @params | Out-Null
           }
 
-          New-NpsRadiusClient @params | Out-Null
-        }
-
-        $existing = Get-NpsRadiusClient -ErrorAction SilentlyContinue |
-                    Where-Object { $_.Name -eq $Name }
-
-        switch ($Action) {
-          "create" {
-            if ($existing) { Write-Output "EXISTS_NO_CHANGE"; exit 0 }
-            New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
-            Write-Output "CREATED"
-            exit 2
+          # Check if client exists (Windows Server 2025 doesn't support -Name parameter)
+          try {
+            $allClients = Get-NpsRadiusClient -ErrorAction SilentlyContinue
+            $existing = $allClients | Where-Object { $_.Name -eq $Name }
+          } catch {
+            $existing = $null
           }
 
-          "update" {
-            if (-not $existing) { Write-Output "MISSING_NO_CHANGE"; exit 0 }
-            netsh nps delete client name="$Name" | Out-Null
-            New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
-            Write-Output "UPDATED"
-            exit 2
-          }
+          switch ($Action) {
+            'create' {
+              if ($existing) {
+                Write-Output "EXISTS_NO_CHANGE: $Name"
+                $Ansible.Changed = $false
+              } else {
+                New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
+                Write-Output "CREATED: $Name ($IP)"
+                $Ansible.Changed = $true
+              }
+            }
 
-          "delete" {
-            if (-not $existing) { Write-Output "MISSING_NO_CHANGE"; exit 0 }
-            netsh nps delete client name="$Name" | Out-Null
-            Write-Output "DELETED"
-            exit 2
-          }
-        }
-        "@
+            'update' {
+              if (-not $existing) {
+                Write-Output "MISSING_NO_CHANGE: $Name"
+                $Ansible.Changed = $false
+              } else {
+                # Update by removing and recreating - use netsh for Server 2025 compatibility
+                try {
+                  $result = netsh nps delete client name="$Name" 2>&1
+                  $resultString = $result -join " "
 
-        [Convert]::ToBase64String(
-          [Text.Encoding]::Unicode.GetBytes($script)
-        )
-        ' | trim }}
-  register: nps_action
-  changed_when: nps_action.rc == 2
-  failed_when: nps_action.rc not in [0, 2]
+                  if (-not ($resultString -like "*Ok*" -or $resultString -like "*successfully*" -or $resultString -like "*not found*")) {
+                    throw "netsh delete failed: $resultString"
+                  }
+                } catch {
+                  throw "Failed to remove client for update: $_"
+                }
+                New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
+
+                # Verify the update
+                $allClientsAfter = Get-NpsRadiusClient -ErrorAction SilentlyContinue
+                $check = $allClientsAfter | Where-Object { $_.Name -eq $Name }
+                if (-not $check) {
+                  throw "UPDATE_VERIFY_FAILED: $Name"
+                }
+
+                Write-Output "UPDATED: $Name ($IP)"
+                $Ansible.Changed = $true
+              }
+            }
+
+            'delete' {
+              if (-not $existing) {
+                Write-Output "MISSING_NO_CHANGE: $Name"
+                $Ansible.Changed = $false
+              } else {
+                # Use netsh for Windows Server 2025 compatibility
+                try {
+                  $result = netsh nps delete client name="$Name" 2>&1
+                  $resultString = $result -join " "
+
+                  if ($resultString -like "*Ok*" -or $resultString -like "*successfully*") {
+                    Write-Output "Client removed via netsh"
+                  } elseif ($resultString -like "*not found*" -or $resultString -like "*does not exist*") {
+                    Write-Output "Client already removed"
+                  } else {
+                    throw "netsh command failed: $resultString"
+                  }
+                } catch {
+                  throw "Failed to remove client: $_"
+                }
+
+                # Verify deletion
+                $allClientsAfter = Get-NpsRadiusClient -ErrorAction SilentlyContinue
+                $check = $allClientsAfter | Where-Object { $_.Name -eq $Name }
+                if ($check) {
+                  throw "DELETE_VERIFY_FAILED: $Name"
+                }
+
+                Write-Output "DELETED: $Name"
+                $Ansible.Changed = $true
+              }
+            }
+
+            default {
+              throw "Invalid action: $Action"
+            }
+          }
+      register: nps_action
 
     - name: Display operation result
       debug:
-        msg: "{{ nps_action.stdout | default('No output') }}"
+        msg: "{{ nps_action.output[0] | default('No output') }}"
