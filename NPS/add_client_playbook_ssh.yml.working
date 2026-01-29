@@ -7,16 +7,18 @@
     ansible_port: 22
     ansible_python_interpreter: none
 
-    # Disable pseudo-TTY allocation to prevent ANSI/terminal escape sequences in output
-    ansible_ssh_common_args: "-T"
-
-    # Normalize survey inputs
     action_name: "{{ action_name | lower | trim }}"
     radius_client: "{{ radius_client | trim }}"
     ip_address: "{{ ip_address | default('') | trim }}"
     radius_vendor: "{{ radius_vendor | default('RADIUS Standard') | trim }}"
 
   tasks:
+    - name: Validate action_name
+      assert:
+        that:
+          - action_name in ['create', 'update', 'delete']
+        fail_msg: "action_name must be one of: create, update, delete"
+
     - name: Validate required fields based on action
       assert:
         that:
@@ -26,6 +28,17 @@
         fail_msg: >
           Missing required fields. create/update require radius_client, ip_address, radius_secret.
           delete requires radius_client only.
+
+    - name: Test SSH connectivity (cmd → powershell)
+      ansible.builtin.raw: >
+        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+        -Command "Write-Output 'SSH_OK'"
+      register: ssh_test
+      changed_when: false
+
+    - name: Display SSH test result
+      debug:
+        msg: "{{ ssh_test.stdout | default('No output') }}"
 
     - name: Apply NPS action via raw PowerShell (EncodedCommand, AWX-safe)
       ansible.builtin.raw: >
@@ -70,20 +83,20 @@
             'create' {
               if ($existing) { Write-Output "EXISTS_NO_CHANGE"; exit 0 }
               New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
-              Write-Output "CREATED"; exit 0
+              Write-Output "CREATED"; exit 2
             }
 
             'update' {
               if (-not $existing) { Write-Output "MISSING_NO_CHANGE"; exit 0 }
               $null = netsh nps delete client name="$Name" 2>&1
               New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
-              Write-Output "UPDATED"; exit 0
+              Write-Output "UPDATED"; exit 2
             }
 
             'delete' {
               if (-not $existing) { Write-Output "MISSING_NO_CHANGE"; exit 0 }
               $null = netsh nps delete client name="$Name" 2>&1
-              Write-Output "DELETED"; exit 0
+              Write-Output "DELETED"; exit 2
             }
 
             default { throw "Invalid action: $Action" }
@@ -92,26 +105,14 @@
         # Encode as UTF-16LE Base64 for Windows PowerShell -EncodedCommand
         ps_encoded: "{{ ps_script | regex_replace('\\r?\\n', '\\r\\n') | b64encode(encoding='utf-16le') }}"
       register: nps_action
-
-      # raw often reports rc=0 even on success/failure depending on SSH shell chain,
-      # so derive status from stdout + common error strings.
-      changed_when: >
-        ('CREATED' in (nps_action.stdout | default(''))) or
-        ('UPDATED' in (nps_action.stdout | default(''))) or
-        ('DELETED' in (nps_action.stdout | default('')))
+      changed_when: nps_action.rc == 2
       failed_when: >
+        (nps_action.rc not in [0, 2]) or
         ('ParserError' in (nps_action.stdout | default(''))) or
         ('Missing closing' in (nps_action.stdout | default(''))) or
-        ('FullyQualifiedErrorId' in (nps_action.stdout | default(''))) or
-        ('Exception' in (nps_action.stdout | default(''))) or
-        ('throw' in (nps_action.stdout | default(''))) or
-        (('CREATED' not in (nps_action.stdout | default(''))) and
-         ('UPDATED' not in (nps_action.stdout | default(''))) and
-         ('DELETED' not in (nps_action.stdout | default(''))) and
-         ('EXISTS_NO_CHANGE' not in (nps_action.stdout | default(''))) and
-         ('MISSING_NO_CHANGE' not in (nps_action.stdout | default(''))))
+        ('Exception' in (nps_action.stdout | default('')))
 
     - name: Display operation result
       debug:
-        msg: "{{ (nps_action.stdout | default('No output')) | trim }}"
+        msg: "{{ nps_action.stdout | default('No output') }}"
  
