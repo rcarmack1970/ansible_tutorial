@@ -4,15 +4,16 @@
   gather_facts: no
 
   vars:
-    # SSH Connection settings (OpenSSH on Windows)
+    # SSH Connection settings for Windows
     ansible_connection: ssh
     ansible_port: 22
-
-    # For Windows over SSH, tell Ansible we're using PowerShell semantics
     ansible_shell_type: powershell
+    ansible_shell_executable: powershell.exe
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+    ansible_python_interpreter: auto_silent
 
-    # Optional but commonly needed with Windows OpenSSH:
-    # ansible_shell_executable: powershell.exe
+    # AWX will inject ansible_user and ansible_ssh_private_key_file from the attached credential
+    # No need to define them here - they come from AWX Resources -> Credentials
 
     # Normalize survey inputs
     action_name: "{{ action_name | lower | trim }}"
@@ -37,11 +38,8 @@
           Missing required fields. create/update require radius_client, ip_address, radius_secret.
           delete requires radius_client only.
 
-    - name: Test SSH connectivity
-      ansible.builtin.ping:
-
-    - name: Apply NPS action (create/update/delete) over SSH PowerShell
-      ansible.builtin.shell: |
+    - name: Apply NPS action (create/update/delete)
+      raw: |
         $ErrorActionPreference = 'Stop'
 
         $Name   = '{{ radius_client }}'
@@ -61,8 +59,8 @@
           param($Name, $IP, $Secret, $Vendor)
 
           $params = @{
-            Name         = $Name
-            Address      = $IP
+            Name = $Name
+            Address = $IP
             SharedSecret = $Secret
           }
 
@@ -85,47 +83,50 @@
           'create' {
             if ($existing) {
               Write-Output "EXISTS_NO_CHANGE: $Name"
-              exit 0
+              $Ansible.Changed = $false
             } else {
               New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
               Write-Output "CREATED: $Name ($IP)"
-              exit 2
+              $Ansible.Changed = $true
             }
           }
 
           'update' {
             if (-not $existing) {
               Write-Output "MISSING_NO_CHANGE: $Name"
-              exit 0
+              $Ansible.Changed = $false
             } else {
               # Update by removing and recreating - use netsh for Server 2025 compatibility
               try {
                 $result = netsh nps delete client name="$Name" 2>&1
                 $resultString = $result -join " "
+
                 if (-not ($resultString -like "*Ok*" -or $resultString -like "*successfully*" -or $resultString -like "*not found*")) {
                   throw "netsh delete failed: $resultString"
                 }
               } catch {
                 throw "Failed to remove client for update: $_"
               }
-
               New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
 
               # Verify the update
               $allClientsAfter = Get-NpsRadiusClient -ErrorAction SilentlyContinue
               $check = $allClientsAfter | Where-Object { $_.Name -eq $Name }
-              if (-not $check) { throw "UPDATE_VERIFY_FAILED: $Name" }
+              if (-not $check) {
+                throw "UPDATE_VERIFY_FAILED: $Name"
+              }
 
               Write-Output "UPDATED: $Name ($IP)"
-              exit 2
+              $Ansible.Changed = $true
             }
           }
 
           'delete' {
             if (-not $existing) {
               Write-Output "MISSING_NO_CHANGE: $Name"
-              exit 0
+              $Ansible.Changed = $false
             } else {
+              # Use netsh for Windows Server 2025 compatibility
               try {
                 $result = netsh nps delete client name="$Name" 2>&1
                 $resultString = $result -join " "
@@ -144,22 +145,21 @@
               # Verify deletion
               $allClientsAfter = Get-NpsRadiusClient -ErrorAction SilentlyContinue
               $check = $allClientsAfter | Where-Object { $_.Name -eq $Name }
-              if ($check) { throw "DELETE_VERIFY_FAILED: $Name" }
+              if ($check) {
+                throw "DELETE_VERIFY_FAILED: $Name"
+              }
 
               Write-Output "DELETED: $Name"
-              exit 2
+              $Ansible.Changed = $true
             }
           }
 
-          default { throw "Invalid action: $Action" }
+          default {
+            throw "Invalid action: $Action"
+          }
         }
-      args:
-        executable: powershell.exe
       register: nps_action
-      changed_when: nps_action.rc == 2
-      failed_when: nps_action.rc not in [0, 2]
 
     - name: Display operation result
       debug:
-        msg: "{{ nps_action.stdout | default('No output') }}"
- 
+        var: nps_action.stdout_lines
