@@ -1,57 +1,22 @@
-- name: Manage NPS RADIUS client via SSH (raw PowerShell)
-  hosts: all
-  gather_facts: no
-
-  vars:
-    ansible_connection: ssh
-    ansible_port: 22
-    ansible_python_interpreter: none
-
-    action_name: "{{ action_name | lower | trim }}"
-    radius_client: "{{ radius_client | trim }}"
-    ip_address: "{{ ip_address | default('') | trim }}"
-    radius_vendor: "{{ radius_vendor | default('RADIUS Standard') | trim }}"
-
-  tasks:
-    - name: Validate action_name
-      assert:
-        that:
-          - action_name in ['create', 'update', 'delete']
-        fail_msg: "action_name must be one of: create, update, delete"
-
-    - name: Validate required fields based on action
-      assert:
-        that:
-          - radius_client != ''
-          - action_name == 'delete' or ip_address != ''
-          - action_name == 'delete' or (radius_secret is defined and (radius_secret | string | length) > 0)
-        fail_msg: >
-          Missing required fields. create/update require radius_client, ip_address, radius_secret.
-          delete requires radius_client only.
-
-    - name: Test SSH connectivity (cmd → powershell)
+    - name: Apply NPS action via raw PowerShell (EncodedCommand, AWX-safe)
       ansible.builtin.raw: >
         powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-        -Command "Write-Output 'SSH_OK'"
-      register: ssh_test
-      changed_when: false
-
-    - name: Display SSH test result
-      debug:
-        msg: "{{ ssh_test.stdout | default('No output') }}"
-
-    - name: Apply NPS action via raw PowerShell
-      ansible.builtin.raw: |
-        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "& {
+        -EncodedCommand {{ ps_encoded }}
+      vars:
+        ps_script: |
           $ErrorActionPreference = 'Stop'
 
-          $Name   = '{{ radius_client }}'
-          $Action = '{{ action_name }}'
-          $IP     = '{{ ip_address }}'
-          $Secret = '{{ radius_secret | default('') }}'
-          $Vendor = '{{ radius_vendor }}'
+          $Name   = "{{ radius_client }}"
+          $Action = "{{ action_name }}"
+          $IP     = "{{ ip_address }}"
+          $Secret = "{{ radius_secret | default('') }}"
+          $Vendor = "{{ radius_vendor }}"
 
-          Import-Module NPS -ErrorAction Stop
+          try {
+            Import-Module NPS -ErrorAction Stop
+          } catch {
+            throw "NPS module not available. Is NPS role installed?"
+          }
 
           function New-Client {
             param($Name, $IP, $Secret, $Vendor)
@@ -62,7 +27,7 @@
               SharedSecret = $Secret
             }
 
-            if ($Vendor -and $Vendor -ne 'RADIUS Standard') {
+            if (-not [string]::IsNullOrWhiteSpace($Vendor) -and $Vendor -ne 'RADIUS Standard') {
               $params['VendorName'] = $Vendor
             }
 
@@ -74,48 +39,29 @@
 
           switch ($Action) {
             'create' {
-              if ($existing) {
-                Write-Output 'EXISTS_NO_CHANGE'
-                exit 0
-              }
+              if ($existing) { Write-Output "EXISTS_NO_CHANGE"; exit 0 }
               New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
-              Write-Output 'CREATED'
-              exit 2
+              Write-Output "CREATED"; exit 2
             }
 
             'update' {
-              if (-not $existing) {
-                Write-Output 'MISSING_NO_CHANGE'
-                exit 0
-              }
-
-              netsh nps delete client name="$Name" | Out-Null
+              if (-not $existing) { Write-Output "MISSING_NO_CHANGE"; exit 0 }
+              $out = netsh nps delete client name="$Name" 2>&1
               New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
-              Write-Output 'UPDATED'
-              exit 2
+              Write-Output "UPDATED"; exit 2
             }
 
             'delete' {
-              if (-not $existing) {
-                Write-Output 'MISSING_NO_CHANGE'
-                exit 0
-              }
-
-              netsh nps delete client name="$Name" | Out-Null
-              Write-Output 'DELETED'
-              exit 2
+              if (-not $existing) { Write-Output "MISSING_NO_CHANGE"; exit 0 }
+              $out = netsh nps delete client name="$Name" 2>&1
+              Write-Output "DELETED"; exit 2
             }
 
-            default {
-              throw 'Invalid action'
-            }
+            default { throw "Invalid action: $Action" }
           }
-        }"
+        # Encode as UTF-16LE Base64 for Windows PowerShell -EncodedCommand
+        ps_encoded: "{{ ps_script | to_json | from_json | regex_replace('\\r?\\n', '\\r\\n') | b64encode(encoding='utf-16le') }}"
       register: nps_action
       changed_when: nps_action.rc == 2
       failed_when: nps_action.rc not in [0, 2]
-
-    - name: Display operation result
-      debug:
-        msg: "{{ nps_action.stdout | default('No output') }}"
  
