@@ -34,9 +34,6 @@
           Missing required fields. create/update require radius_client, ip_address, radius_secret.
           delete requires radius_client only.
 
-    - name: Test SSH connectivity
-      ansible.builtin.ping:
-
     - name: Apply NPS action (create/update/delete) over SSH PowerShell
       ansible.builtin.shell: |
         $ErrorActionPreference = 'Stop'
