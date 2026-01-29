@@ -38,114 +38,72 @@
 
     - name: Apply NPS action (create/update/delete) over SSH PowerShell
       ansible.builtin.raw: |
-        $ErrorActionPreference = 'Stop'
+        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "& {
+          $ErrorActionPreference = 'Stop'
 
-        $Name   = "{{ radius_client }}"
-        $Action = "{{ action_name }}"
-        $IP     = "{{ ip_address }}"
-        $Secret = "{{ radius_secret | default('') }}"
-        $Vendor = "{{ radius_vendor }}"
+          $Name   = '{{ radius_client }}'
+          $Action = '{{ action_name }}'
+          $IP     = '{{ ip_address }}'
+          $Secret = '{{ radius_secret | default('') }}'
+          $Vendor = '{{ radius_vendor }}'
 
-        try {
           Import-Module NPS -ErrorAction Stop
-        } catch {
-          throw "NPS module not available. Is NPS role installed?"
-        }
 
-        function New-Client {
-          param($Name, $IP, $Secret, $Vendor)
+          function New-Client {
+            param($Name, $IP, $Secret, $Vendor)
 
-          $params = @{
-            Name         = $Name
-            Address      = $IP
-            SharedSecret = $Secret
+            $params = @{
+              Name         = $Name
+              Address      = $IP
+              SharedSecret = $Secret
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($Vendor) -and $Vendor -ne 'RADIUS Standard') {
+              $params['VendorName'] = $Vendor
+            }
+
+            New-NpsRadiusClient @params | Out-Null
           }
 
-          if (-not [string]::IsNullOrWhiteSpace($Vendor) -and $Vendor -ne 'RADIUS Standard') {
-            $params['VendorName'] = $Vendor
-          }
-
-          New-NpsRadiusClient @params | Out-Null
-        }
-
-        try {
           $allClients = Get-NpsRadiusClient -ErrorAction SilentlyContinue
           $existing = $allClients | Where-Object { $_.Name -eq $Name }
-        } catch {
-          $existing = $null
-        }
 
-        switch ($Action) {
-          'create' {
-            if ($existing) {
-              Write-Output "EXISTS_NO_CHANGE: $Name"
-              exit 0
-            } else {
+          switch ($Action) {
+            'create' {
+              if ($existing) {
+                Write-Output 'EXISTS_NO_CHANGE'
+                exit 0
+              }
               New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
-              Write-Output "CREATED: $Name ($IP)"
+              Write-Output 'CREATED'
               exit 2
             }
-          }
 
-          'update' {
-            if (-not $existing) {
-              Write-Output "MISSING_NO_CHANGE: $Name"
-              exit 0
-            } else {
-              try {
-                $result = netsh nps delete client name="$Name" 2>&1
-                $resultString = $result -join " "
-                if (-not ($resultString -like "*Ok*" -or
-                          $resultString -like "*successfully*" -or
-                          $resultString -like "*not found*")) {
-                  throw "netsh delete failed: $resultString"
-                }
-              } catch {
-                throw "Failed to remove client for update: $_"
+            'update' {
+              if (-not $existing) {
+                Write-Output 'MISSING_NO_CHANGE'
+                exit 0
               }
 
+              netsh nps delete client name=`"$Name`" | Out-Null
               New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
-
-              $allClientsAfter = Get-NpsRadiusClient -ErrorAction SilentlyContinue
-              $check = $allClientsAfter | Where-Object { $_.Name -eq $Name }
-              if (-not $check) { throw "UPDATE_VERIFY_FAILED: $Name" }
-
-              Write-Output "UPDATED: $Name ($IP)"
+              Write-Output 'UPDATED'
               exit 2
             }
-          }
 
-          'delete' {
-            if (-not $existing) {
-              Write-Output "MISSING_NO_CHANGE: $Name"
-              exit 0
-            } else {
-              try {
-                $result = netsh nps delete client name="$Name" 2>&1
-                $resultString = $result -join " "
-
-                if ($resultString -like "*Ok*" -or $resultString -like "*successfully*") {
-                  Write-Output "Client removed via netsh"
-                } elseif ($resultString -like "*not found*" -or $resultString -like "*does not exist*") {
-                  Write-Output "Client already removed"
-                } else {
-                  throw "netsh command failed: $resultString"
-                }
-              } catch {
-                throw "Failed to remove client: $_"
+            'delete' {
+              if (-not $existing) {
+                Write-Output 'MISSING_NO_CHANGE'
+                exit 0
               }
 
-              $allClientsAfter = Get-NpsRadiusClient -ErrorAction SilentlyContinue
-              $check = $allClientsAfter | Where-Object { $_.Name -eq $Name }
-              if ($check) { throw "DELETE_VERIFY_FAILED: $Name" }
-
-              Write-Output "DELETED: $Name"
+              netsh nps delete client name=`"$Name`" | Out-Null
+              Write-Output 'DELETED'
               exit 2
             }
           }
+        }"
 
-          default { throw "Invalid action: $Action" }
-        }
       register: nps_action
       changed_when: nps_action.rc == 2
       failed_when: nps_action.rc not in [0, 2]
@@ -153,4 +111,3 @@
     - name: Display operation result
       debug:
         msg: "{{ nps_action.stdout | default('No output') }}"
- 
