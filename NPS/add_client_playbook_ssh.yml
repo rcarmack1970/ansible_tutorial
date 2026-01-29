@@ -39,7 +39,7 @@
           delete requires radius_client only.
 
     - name: Apply NPS action (create/update/delete)
-      ansible.builtin.raw: |
+      raw: |
         $ErrorActionPreference = 'Stop'
 
         $Name   = '{{ radius_client }}'
