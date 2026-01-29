@@ -1,0 +1,160 @@
+- name: Manage NPS RADIUS client (single action) over SSH
+  hosts: all
+  gather_facts: no
+
+  vars:
+    # SSH Connection settings
+    ansible_user: "ansible-ssh"
+    ansible_password: "Mission1990$"
+    ansible_port: 22
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+    ansible_ssh_retries: 3
+    ansible_shell_type: powershell
+    ansible_become_method: runas
+    ansible_become_user: "{{ ansible_user }}"
+
+    # Normalize survey inputs
+    action_name: "{{ action_name | lower | trim }}"
+    radius_client: "{{ radius_client | trim }}"
+    ip_address: "{{ ip_address | default('') | trim }}"
+    radius_vendor: "{{ radius_vendor | default('RADIUS Standard') | trim }}"
+
+  tasks:
+    - name: Validate action_name
+      assert:
+        that:
+          - action_name in ['create', 'update', 'delete']
+        fail_msg: "action_name must be one of: create, update, delete"
+
+    - name: Validate required fields based on action
+      assert:
+        that:
+          - radius_client != ''
+          - action_name == 'delete' or ip_address != ''
+          - action_name == 'delete' or (radius_secret is defined and (radius_secret | string | length) > 0)
+        fail_msg: >
+          Missing required fields. create/update require radius_client, ip_address, radius_secret.
+          delete requires radius_client only.
+
+    # Optional: prove PowerShell can run over SSH (useful for troubleshooting)
+    #- name: Confirm PowerShell execution over SSH
+    #  ansible.windows.win_shell: >
+    #    powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command
+    #    "$PSVersionTable.PSVersion.ToString()"
+    #  register: ps_version
+    #  changed_when: false
+
+    #- name: Show PowerShell version
+    #  debug:
+    #    var: ps_version.stdout
+
+    - name: Apply NPS action (create/update/delete)
+      raw: |
+        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command @'
+        $ErrorActionPreference = 'Stop'
+
+        # Variables with proper escaping
+        $Name = '{{ radius_client | replace("'", "''") }}'
+        $Action = '{{ action_name }}'
+        $IP = '{{ ip_address | replace("'", "''") }}'
+        $Secret = '{{ radius_secret | default("") | replace("'", "''") }}'
+        $Vendor = '{{ radius_vendor | replace("'", "''") }}'
+
+        try {
+            Import-Module NPS -ErrorAction Stop
+        } catch {
+            Write-Output "ERROR: NPS module not available. Is NPS role installed?"
+            exit 1
+        }
+
+        function New-Client {
+            param($Name, $IP, $Secret, $Vendor)
+
+            $params = @{
+                Name = $Name
+                Address = $IP
+                SharedSecret = $Secret
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($Vendor) -and $Vendor -ne 'RADIUS Standard') {
+                $params['VendorName'] = $Vendor
+            }
+
+            New-NpsRadiusClient @params | Out-Null
+        }
+
+        # Check if client exists (older NPS versions don't support -Name parameter)
+        try {
+            $allClients = Get-NpsRadiusClient -ErrorAction SilentlyContinue
+            $existing = $allClients | Where-Object { $_.Name -eq $Name }
+        } catch {
+            $existing = $null
+        }
+
+        switch ($Action) {
+            'create' {
+                if ($existing) {
+                    Write-Output "EXISTS_NO_CHANGE: $Name"
+                    exit 0
+                }
+
+                New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
+                Write-Output "CREATED: $Name ($IP)"
+                exit 0
+            }
+
+            'update' {
+                if (-not $existing) {
+                    Write-Output "MISSING_NO_CHANGE: $Name"
+                    exit 0
+                }
+
+                # Update by removing and recreating
+                $existing | Remove-NpsRadiusClient -Confirm:$false | Out-Null
+                New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
+
+                # Verify the update
+                $allClientsAfter = Get-NpsRadiusClient -ErrorAction SilentlyContinue
+                $check = $allClientsAfter | Where-Object { $_.Name -eq $Name }
+                if (-not $check) {
+                    Write-Output "UPDATE_VERIFY_FAILED: $Name"
+                    exit 1
+                }
+
+                Write-Output "UPDATED: $Name ($IP)"
+                exit 0
+            }
+
+            'delete' {
+                if (-not $existing) {
+                    Write-Output "MISSING_NO_CHANGE: $Name"
+                    exit 0
+                }
+
+                $existing | Remove-NpsRadiusClient -Confirm:$false | Out-Null
+
+                # Verify deletion
+                $allClientsAfter = Get-NpsRadiusClient -ErrorAction SilentlyContinue
+                $check = $allClientsAfter | Where-Object { $_.Name -eq $Name }
+                if ($check) {
+                    Write-Output "DELETE_VERIFY_FAILED: $Name"
+                    exit 1
+                }
+
+                Write-Output "DELETED: $Name"
+                exit 0
+            }
+
+            default {
+                Write-Output "Invalid action: $Action"
+                exit 1
+            }
+        }
+        '@
+      register: nps_action
+      changed_when: "'NO_CHANGE' not in (nps_action.stdout | default(''))"
+      failed_when: nps_action.rc != 0
+
+    - name: Display operation result
+      debug:
+        msg: "{{ nps_action.stdout_lines | default(['No output']) }}"
