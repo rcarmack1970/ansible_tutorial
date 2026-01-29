@@ -37,7 +37,8 @@
           delete requires radius_client only.
 
     - name: Test SSH connection
-      ansible.builtin.ping:
+      ansible.windows.win_powershell:
+        script: Write-Output "Connection OK"
       register: ping_result
 
     - name: Apply NPS action (create/update/delete)
