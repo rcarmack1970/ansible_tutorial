@@ -33,62 +33,77 @@
           Missing required fields. create/update require radius_client, ip_address, radius_secret.
           delete requires radius_client only.
 
-    - name: Apply NPS action (create/update/delete) over SSH PowerShell
+    - name: Create temporary PowerShell script
       ansible.builtin.raw: |
-        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "
-        `$ErrorActionPreference = 'Stop'
+        $tempScript = [System.IO.Path]::GetTempFileName() + ".ps1"
+        @'
+        $ErrorActionPreference = "Stop"
 
-        `$Name   = '{{ radius_client }}'
-        `$Action = '{{ action_name }}'
-        `$IP     = '{{ ip_address }}'
-        `$Secret = '{{ radius_secret | default("") }}'
-        `$Vendor = '{{ radius_vendor }}'
+        $Name   = "{{ radius_client }}"
+        $Action = "{{ action_name }}"
+        $IP     = "{{ ip_address }}"
+        $Secret = "{{ radius_secret | default("") }}"
+        $Vendor = "{{ radius_vendor }}"
 
         Import-Module NPS -ErrorAction Stop
 
         function New-Client {
-          param(`$Name, `$IP, `$Secret, `$Vendor)
+          param($Name, $IP, $Secret, $Vendor)
 
-          `$params = @{
-            Name         = `$Name
-            Address      = `$IP
-            SharedSecret = `$Secret
+          $params = @{
+            Name         = $Name
+            Address      = $IP
+            SharedSecret = $Secret
           }
 
-          if (-not [string]::IsNullOrWhiteSpace(`$Vendor) -and `$Vendor -ne 'RADIUS Standard') {
-            `$params['VendorName'] = `$Vendor
+          if (-not [string]::IsNullOrWhiteSpace($Vendor) -and $Vendor -ne "RADIUS Standard") {
+            $params["VendorName"] = $Vendor
           }
 
           New-NpsRadiusClient @params | Out-Null
         }
 
-        `$existing = Get-NpsRadiusClient -ErrorAction SilentlyContinue |
-                    Where-Object { `$_.Name -eq `$Name }
+        $existing = Get-NpsRadiusClient -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -eq $Name }
 
-        switch (`$Action) {
-          'create' {
-            if (`$existing) { Write-Output 'EXISTS_NO_CHANGE'; exit 0 }
-            New-Client -Name `$Name -IP `$IP -Secret `$Secret -Vendor `$Vendor
-            Write-Output 'CREATED'
+        switch ($Action) {
+          "create" {
+            if ($existing) { Write-Output "EXISTS_NO_CHANGE"; exit 0 }
+            New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
+            Write-Output "CREATED"
             exit 2
           }
 
-          'update' {
-            if (-not `$existing) { Write-Output 'MISSING_NO_CHANGE'; exit 0 }
-            netsh nps delete client name=`"`$Name`" | Out-Null
-            New-Client -Name `$Name -IP `$IP -Secret `$Secret -Vendor `$Vendor
-            Write-Output 'UPDATED'
+          "update" {
+            if (-not $existing) { Write-Output "MISSING_NO_CHANGE"; exit 0 }
+            netsh nps delete client name="$Name" | Out-Null
+            New-Client -Name $Name -IP $IP -Secret $Secret -Vendor $Vendor
+            Write-Output "UPDATED"
             exit 2
           }
 
-          'delete' {
-            if (-not `$existing) { Write-Output 'MISSING_NO_CHANGE'; exit 0 }
-            netsh nps delete client name=`"`$Name`" | Out-Null
-            Write-Output 'DELETED'
+          "delete" {
+            if (-not $existing) { Write-Output "MISSING_NO_CHANGE"; exit 0 }
+            netsh nps delete client name="$Name" | Out-Null
+            Write-Output "DELETED"
             exit 2
           }
         }
-        "
+        '@ | Out-File -FilePath $tempScript -Encoding UTF8
+        Write-Output $tempScript
+      register: temp_script
+
+    - name: Execute PowerShell script
+      ansible.builtin.raw: |
+        $scriptPath = "{{ temp_script.stdout_lines[0] }}"
+        $exitCode = 0
+        try {
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $scriptPath
+          $exitCode = $LASTEXITCODE
+        } finally {
+          Remove-Item -Path $scriptPath -Force -ErrorAction SilentlyContinue
+        }
+        exit $exitCode
       register: nps_action
       changed_when: nps_action.rc == 2
       failed_when: nps_action.rc not in [0, 2]
