@@ -8,6 +8,7 @@
     ansible_connection: ssh
     ansible_port: 22
     ansible_shell_type: powershell
+    ansible_shell_executable: powershell.exe
     ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
 
     # AWX will inject ansible_user and ansible_ssh_private_key_file from the attached credential
@@ -35,11 +36,6 @@
         fail_msg: >
           Missing required fields. create/update require radius_client, ip_address, radius_secret.
           delete requires radius_client only.
-
-    - name: Test SSH connection
-      ansible.windows.win_powershell:
-        script: Write-Output "Connection OK"
-      register: ping_result
 
     - name: Apply NPS action (create/update/delete)
       ansible.windows.win_powershell:
