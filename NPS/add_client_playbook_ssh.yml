@@ -10,9 +10,6 @@
     ansible_shell_type: powershell
     ansible_python_interpreter: none
 
-    # Windows over SSH uses PowerShell semantics
-    ansible_shell_type: powershell
-
     # Normalize survey inputs
     action_name: "{{ action_name | lower | trim }}"
     radius_client: "{{ radius_client | trim }}"
@@ -44,7 +41,7 @@
           $Name   = '{{ radius_client }}'
           $Action = '{{ action_name }}'
           $IP     = '{{ ip_address }}'
-          $Secret = '{{ radius_secret | default('') }}'
+          $Secret = "{{ radius_secret | default('') }}"
           $Vendor = '{{ radius_vendor }}'
 
           Import-Module NPS -ErrorAction Stop
