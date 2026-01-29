@@ -38,7 +38,7 @@
           delete requires radius_client only.
 
     - name: Apply NPS action (create/update/delete)
-      ansible.windows.win_shell: |
+      shell: |
         $ErrorActionPreference = 'Stop'
 
         $Name   = '{{ radius_client }}'
