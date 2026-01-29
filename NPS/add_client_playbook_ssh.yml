@@ -35,15 +35,14 @@
 
     - name: Apply NPS action (create/update/delete) over SSH PowerShell
       ansible.builtin.raw: |
-        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {{ '
-        $script = @"
+        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {{ ('
         $ErrorActionPreference = "Stop"
 
-        $Name   = "{{ radius_client }}"
-        $Action = "{{ action_name }}"
-        $IP     = "{{ ip_address }}"
-        $Secret = "{{ radius_secret | default("") }}"
-        $Vendor = "{{ radius_vendor }}"
+        $Name   = "' + radius_client + '"
+        $Action = "' + action_name + '"
+        $IP     = "' + ip_address + '"
+        $Secret = "' + (radius_secret | default("")) + '"
+        $Vendor = "' + radius_vendor + '"
 
         Import-Module NPS -ErrorAction Stop
 
@@ -89,12 +88,7 @@
             exit 2
           }
         }
-        "@
-
-        [Convert]::ToBase64String(
-          [Text.Encoding]::Unicode.GetBytes($script)
-        )
-        ' | trim }}
+        ') | encode_utf16le | b64encode }}
       register: nps_action
       changed_when: nps_action.rc == 2
       failed_when: nps_action.rc not in [0, 2]
