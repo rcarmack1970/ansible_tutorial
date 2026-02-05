@@ -1,0 +1,103 @@
+---
+# AWX-optimized version - credentials injected by AWX
+- name: Get all NPS RADIUS clients via SSH
+  hosts: all
+  gather_facts: no
+
+  vars:
+    # SSH Connection settings for Windows
+    ansible_connection: ssh
+    ansible_port: 22
+    ansible_shell_type: powershell
+    ansible_become_method: runas
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
+    # PowerShell settings for SSH
+    ansible_shell_executable: powershell.exe
+
+    # Timeout settings (optional - increase if needed)
+    ansible_ssh_timeout: 30
+
+    # AWX will inject ansible_user and ansible_password from the attached credential
+    # No need to define them here - they come from AWX Resources -> Credentials
+
+  tasks:
+    - name: Get all NPS RADIUS clients
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+
+          # Import NPS module
+          try {
+            Import-Module NPS -ErrorAction Stop
+          } catch {
+            throw "NPS module not available. Is NPS role installed?"
+          }
+
+          # Get all RADIUS clients
+          try {
+            $clients = Get-NpsRadiusClient -ErrorAction Stop
+
+            if ($clients.Count -eq 0) {
+              Write-Output "No RADIUS clients found on this NPS server."
+              $Ansible.Changed = $false
+              return
+            }
+
+            # Format output as a readable list
+            $output = @()
+            $output += "="*80
+            $output += "NPS RADIUS Clients - Total: $($clients.Count)"
+            $output += "="*80
+
+            foreach ($client in $clients) {
+              $output += ""
+              $output += "Client Name:    $($client.Name)"
+              $output += "IP Address:     $($client.Address)"
+              $output += "Vendor:         $($client.VendorName)"
+              $output += "Enabled:        $($client.Enabled)"
+              $output += "Shared Secret:  ****** (hidden)"
+              $output += "-"*80
+            }
+
+            $output | ForEach-Object { Write-Output $_ }
+            $Ansible.Changed = $false
+
+          } catch {
+            throw "Failed to retrieve NPS clients: $_"
+          }
+
+      register: nps_clients
+
+    - name: Display NPS clients
+      debug:
+        var: nps_clients.output
+
+    - name: Export clients to JSON format
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module NPS -ErrorAction Stop
+
+          $clients = Get-NpsRadiusClient -ErrorAction Stop
+
+          # Create simplified object array
+          $clientList = @()
+          foreach ($client in $clients) {
+            $clientList += @{
+              Name = $client.Name
+              Address = $client.Address
+              Vendor = $client.VendorName
+              Enabled = $client.Enabled
+            }
+          }
+
+          # Convert to JSON
+          $json = $clientList | ConvertTo-Json -Depth 3
+          Write-Output $json
+
+      register: nps_clients_json
+
+    - name: Save JSON output
+      debug:
+        msg: "{{ nps_clients_json.output[0] }}"
