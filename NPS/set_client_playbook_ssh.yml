@@ -1,15 +1,15 @@
 ---
 # AWX-optimized version - credentials injected by AWX
-- name: Manage NPS RADIUS client via WinRM
+- name: Manage NPS RADIUS client via SSH
   hosts: all
   gather_facts: no
 
   vars:
-    # WinRM Connection settings
-    ansible_connection: winrm
-    ansible_port: 5985  # Use 5986 for HTTPS
-    ansible_winrm_transport: ntlm  # Or kerberos, credssp, basic
-    ansible_winrm_server_cert_validation: ignore  # For testing only
+    # SSH Connection settings
+    ansible_connection: ssh
+    ansible_port: 22
+    ansible_shell_type: powershell
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
 
     # AWX will inject ansible_user and ansible_password from the attached credential
     # No need to define them here - they come from AWX Resources -> Credentials
@@ -27,7 +27,7 @@
         fail_msg: >
           Missing required field. radius_client, ip_address, radius_secret.
     
-    - name: Test WinRM connection
+    - name: Test SSH connection
       ansible.windows.win_ping:
       register: ping_result
 
