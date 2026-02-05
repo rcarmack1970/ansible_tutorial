@@ -33,10 +33,6 @@
           - radius_client != ''
         fail_msg: >
           Missing required field. radius_client, ip_address, radius_secret.
-    
-    - name: Test SSH connection
-      ansible.windows.win_ping:
-      register: ping_result
 
     - name: Update NPS Client
       ansible.windows.win_powershell:
