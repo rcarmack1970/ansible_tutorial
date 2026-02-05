@@ -36,7 +36,7 @@
 
           # Get all RADIUS clients
           try {
-            $clients = Get-NpsRadiusClient -ErrorAction Stop
+            $clients = Get-NpsRadiusClient -ErrorAction Stop | Sort-Object Name
 
             if ($clients.Count -eq 0) {
               Write-Output "No RADIUS clients found on this NPS server."
@@ -47,7 +47,7 @@
             # Format output as a readable list
             $output = @()
             $output += "="*80
-            $output += "NPS RADIUS Clients - Total: $($clients.Count)"
+            $output += "NPS RADIUS Clients - Total: $($clients.Count) (sorted by name)"
             $output += "="*80
 
             foreach ($client in $clients) {
@@ -79,7 +79,7 @@
           $ErrorActionPreference = 'Stop'
           Import-Module NPS -ErrorAction Stop
 
-          $clients = Get-NpsRadiusClient -ErrorAction Stop
+          $clients = Get-NpsRadiusClient -ErrorAction Stop | Sort-Object Name
 
           # Create simplified object array
           $clientList = @()
