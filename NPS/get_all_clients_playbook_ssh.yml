@@ -44,22 +44,20 @@
               return
             }
 
-            # Format output as a readable list
+            # Format output as one line per client
             $output = @()
-            $output += "="*80
+            $output += "="*100
             $output += "NPS RADIUS Clients - Total: $($clients.Count) (sorted by name)"
-            $output += "="*80
+            $output += "="*100
+            $output += "{0,-30} {1,-20} {2,-25} {3,-10}" -f "Client Name", "IP Address", "Vendor", "Enabled"
+            $output += "-"*100
 
             foreach ($client in $clients) {
-              $output += ""
-              $output += "Client Name:    $($client.Name)"
-              $output += "IP Address:     $($client.Address)"
-              $output += "Vendor:         $($client.VendorName)"
-              $output += "Enabled:        $($client.Enabled)"
-              $output += "Shared Secret:  ****** (hidden)"
-              $output += "-"*80
+              $line = "{0,-30} {1,-20} {2,-25} {3,-10}" -f $client.Name, $client.Address, $client.VendorName, $client.Enabled
+              $output += $line
             }
 
+            $output += "="*100
             $output | ForEach-Object { Write-Output $_ }
             $Ansible.Changed = $false
 
