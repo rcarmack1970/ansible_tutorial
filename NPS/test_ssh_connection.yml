@@ -1,0 +1,33 @@
+---
+# Diagnostic playbook to test SSH connectivity to Windows
+- name: Test SSH connection to Windows NPS server
+  hosts: all
+  gather_facts: no
+
+  vars:
+    ansible_connection: ssh
+    ansible_port: 22
+    ansible_shell_type: powershell
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+    ansible_shell_executable: powershell.exe
+
+  tasks:
+    - name: Test basic SSH connectivity with win_ping
+      ansible.windows.win_ping:
+      register: ping_result
+
+    - name: Display ping result
+      debug:
+        var: ping_result
+
+    - name: Test PowerShell execution
+      ansible.windows.win_powershell:
+        script: |
+          Write-Output "PowerShell is working over SSH!"
+          Write-Output "Current user: $env:USERNAME"
+          Write-Output "Computer name: $env:COMPUTERNAME"
+      register: ps_test
+
+    - name: Display PowerShell test result
+      debug:
+        var: ps_test.output

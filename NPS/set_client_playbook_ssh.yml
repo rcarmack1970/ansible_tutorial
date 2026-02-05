@@ -5,11 +5,18 @@
   gather_facts: no
 
   vars:
-    # SSH Connection settings
+    # SSH Connection settings for Windows
     ansible_connection: ssh
     ansible_port: 22
     ansible_shell_type: powershell
-    ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+    ansible_become_method: runas
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
+    # PowerShell settings for SSH
+    ansible_shell_executable: powershell.exe
+
+    # Timeout settings (optional - increase if needed)
+    ansible_ssh_timeout: 30
 
     # AWX will inject ansible_user and ansible_password from the attached credential
     # No need to define them here - they come from AWX Resources -> Credentials
